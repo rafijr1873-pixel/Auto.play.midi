@@ -1,0 +1,922 @@
+--[[
+╔════════════════════════════════════════════════════════╗
+║  🥁 AUTO DRUM v5.0 — Virtual Drums (Ro-Xolotl)       ║
+║  Features:                                             ║
+║   • Rock 120BPM │ Eyeless 142BPM (pattern mode)       ║
+║   • 5 Quick MIDI presets (1-tap load & play)           ║
+║   • Custom MIDI URL loader                             ║
+║   • Toggle GUI (minimize / maximize)                   ║
+║  Mobile: Delta / Fluxus / Arceus X / Codex / Hydrogen  ║
+╚════════════════════════════════════════════════════════╝
+]]
+
+-- ════════════════════════════════════════════
+-- §1  CLEANUP
+-- ════════════════════════════════════════════
+if _G._AD then _G._AD = false; task.wait(0.65) end
+local plr = game:GetService("Players").LocalPlayer
+local pgui = plr:WaitForChild("PlayerGui")
+if pgui:FindFirstChild("DrumGUI") then
+    pgui.DrumGUI:Destroy(); task.wait(0.1)
+end
+
+-- ════════════════════════════════════════════
+-- §2  SERVICES
+-- ════════════════════════════════════════════
+local VIM = game:GetService("VirtualInputManager")
+local UIS = game:GetService("UserInputService")
+
+-- ════════════════════════════════════════════
+-- §3  KEYBINDS
+-- ════════════════════════════════════════════
+local K = {
+    Ki=Enum.KeyCode.B, Ki2=Enum.KeyCode.N,
+    Sn=Enum.KeyCode.C, Sn2=Enum.KeyCode.V, SnS=Enum.KeyCode.S,
+    HC=Enum.KeyCode.X, HC2=Enum.KeyCode.M, HO=Enum.KeyCode.Z,
+    T1=Enum.KeyCode.D, T1B=Enum.KeyCode.F,
+    T2=Enum.KeyCode.G, T2B=Enum.KeyCode.H,
+    T3=Enum.KeyCode.J, T3B=Enum.KeyCode.K,
+    CL=Enum.KeyCode.E, CR=Enum.KeyCode.R,
+    Rd=Enum.KeyCode.U, RB=Enum.KeyCode.I,
+    Ch=Enum.KeyCode.O, Sp=Enum.KeyCode.W,
+    Cb=Enum.KeyCode.A,
+}
+
+-- ════════════════════════════════════════════
+-- §4  GM DRUM MAP → Virtual Drums
+-- ════════════════════════════════════════════
+local GM = {
+    [35]=K.Ki,[36]=K.Ki,
+    [37]=K.SnS,
+    [38]=K.Sn,[39]=K.Sn,[40]=K.Sn,
+    [41]=K.T3,[43]=K.T3,
+    [42]=K.HC,[44]=K.HC,
+    [45]=K.T2,[47]=K.T2,
+    [46]=K.HO,
+    [48]=K.T1,[50]=K.T1,
+    [49]=K.CL,[57]=K.CR,
+    [51]=K.Rd,[59]=K.Rd,
+    [52]=K.Ch,[53]=K.RB,
+    [54]=K.HC,[55]=K.Sp,
+    [56]=K.Cb,[58]=K.Sp,
+}
+
+-- ════════════════════════════════════════════
+-- §5  QUICK MIDI PRESETS
+-- ════════════════════════════════════════════
+local PRESETS = {
+    {
+        name = "Eyeless",
+        artist = "Slipknot",
+        color = Color3.fromRGB(180, 40, 40),
+        url = "https://github.com/rafijr1873-pixel/Auto.play.midi/raw/refs/heads/main/Eyeless_Without_metronome_added_1773099208008.mid"
+    },
+    {
+        name = "SIC",
+        artist = "Slipknot",
+        color = Color3.fromRGB(160, 50, 50),
+        url = "https://github.com/rafijr1873-pixel/Auto.play.midi/raw/refs/heads/main/sic__Slipknot_1773144622338.mid"
+    },
+    {
+        name = "Nightmare",
+        artist = "Avenged Sevenfold",
+        color = Color3.fromRGB(50, 50, 160),
+        url = "https://github.com/rafijr1873-pixel/Auto.play.midi/raw/refs/heads/main/Nightmare__Avenged_Sevenfold_1773149185671.mid"
+    },
+    {
+        name = "People=Shit",
+        artist = "Slipknot",
+        color = Color3.fromRGB(140, 60, 30),
+        url = "https://github.com/rafijr1873-pixel/Auto.play.midi/raw/refs/heads/main/People__Shit__Slipknot_1773151767980.mid"
+    },
+    {
+        name = "Holy Wars",
+        artist = "Megadeth",
+        color = Color3.fromRGB(40, 120, 40),
+        url = "https://github.com/rafijr1873-pixel/Auto.play.midi/raw/refs/heads/main/Holy_Wars_The_Punishment_Due__Megadeth_Drums_1773181360476.mid"
+    },
+}
+
+-- ════════════════════════════════════════════
+-- §6  STATE
+-- ════════════════════════════════════════════
+_G._AD = false
+local barN = 0
+local pIdx = 1
+local secN = "IDLE"
+local introD = true
+local RNG = Random.new(tick())
+local midiObj = nil
+local midiLoading = false
+local guiOpen = true
+local kConn = nil
+local currentSong = ""
+
+-- ════════════════════════════════════════════
+-- §7  CORE ENGINE
+-- ════════════════════════════════════════════
+local function hum(fast)
+    local ms = fast and RNG:NextInteger(5,16) or RNG:NextInteger(16,45)
+    return (ms/1000)*((RNG:NextInteger(0,1)==0) and 1 or -1)
+end
+
+local function press(keys, fast)
+    if typeof(keys)=="EnumItem" then keys={keys} end
+    for i=1,#keys do VIM:SendKeyEvent(true,keys[i],false,game) end
+    task.wait(fast and RNG:NextInteger(22,42)/1000 or RNG:NextInteger(48,100)/1000)
+    for i=1,#keys do VIM:SendKeyEvent(false,keys[i],false,game) end
+end
+
+local function ok() return _G._AD end
+
+local function bar(pat,sub,bpm)
+    barN=barN+1
+    local base=60/bpm/(sub==16 and 4 or 2)
+    local f=sub==16
+    for i=1,#pat do
+        if not ok() then return false end
+        if pat[i] then press(pat[i],f) end
+        local d=base+hum(f); if d<0.03 then d=0.03 end
+        task.wait(d)
+    end
+    return ok()
+end
+
+local function sec(name,bars,sub,bpm)
+    secN=name
+    for i=1,#bars do
+        if not bar(bars[i],sub,bpm) then return false end
+    end
+    return ok()
+end
+
+-- ════════════════════════════════════════════
+-- §8  MIDI PARSER (Format 0 & 1)
+-- ════════════════════════════════════════════
+local MP = {}
+
+function MP.parse(raw)
+    if not raw or #raw < 14 then return nil, "File too small" end
+    local pos, len = 1, #raw
+
+    local function rb()
+        if pos>len then error("EOF") end
+        local b=string.byte(raw,pos); pos=pos+1; return b
+    end
+    local function rn(n) local v=0; for _=1,n do v=v*256+rb() end; return v end
+    local function rs(n)
+        if pos+n-1>len then error("EOF") end
+        local s=raw:sub(pos,pos+n-1); pos=pos+n; return s
+    end
+    local function rvlq()
+        local v,c=0,0
+        repeat local b=rb(); v=v*128+(b%128); c=c+1
+            if c>4 then error("VLQ") end
+        until b<128; return v
+    end
+
+    local hdr=rs(4)
+    if hdr~="MThd" then return nil,"Not MIDI (no MThd)" end
+    local hl=rn(4); local fmt=rn(2); local nT=rn(2); local div=rn(2)
+    if hl>6 then pos=pos+(hl-6) end
+    if div>=32768 then return nil,"SMPTE not supported" end
+    local ppq=div
+
+    local notes,tempos={},{}
+    for t=1,nT do
+        if pos+8>len then break end
+        local th=rs(4)
+        if th~="MTrk" then return nil,"No MTrk track "..t end
+        local tl=rn(4); local te=pos+tl
+        local at,run=0,0
+        while pos<te and pos<=len do
+            local d=rvlq(); at=at+d
+            if pos>len then break end
+            local pk=string.byte(raw,pos)
+            if not pk then break end
+            local st
+            if pk>=128 then st=rb(); if st<0xF0 then run=st end
+            else st=run; if st==0 then rb(); break end end
+            local hi=math.floor(st/16)
+            if hi==9 then
+                local n,v=rb(),rb()
+                if v>0 and #notes<30000 then notes[#notes+1]={at,n,v,st%16} end
+            elseif hi==8 then rb();rb()
+            elseif hi==10 then rb();rb()
+            elseif hi==11 then rb();rb()
+            elseif hi==12 then rb()
+            elseif hi==13 then rb()
+            elseif hi==14 then rb();rb()
+            elseif st==0xFF then
+                local mt=rb(); local ml=rvlq()
+                if mt==0x51 and ml>=3 then
+                    local us=0; for _=1,3 do us=us*256+rb() end
+                    tempos[#tempos+1]={at,us}
+                    if ml>3 then pos=pos+(ml-3) end
+                else pos=pos+ml end
+            elseif st==0xF0 or st==0xF7 then
+                local sl=rvlq(); pos=pos+sl
+            else pos=te end
+        end
+        pos=te
+    end
+    if #notes==0 then return nil,"No Note-On events" end
+    table.sort(notes,function(a,b) return a[1]<b[1] end)
+    table.sort(tempos,function(a,b) return a[1]<b[1] end)
+    return notes,tempos,ppq
+end
+
+function MP.build(notes,tempos,ppq)
+    local has9=false
+    for _,n in ipairs(notes) do if n[4]==9 then has9=true; break end end
+    local dn={}
+    for _,n in ipairs(notes) do
+        if (has9 and n[4]==9) or (not has9) then
+            local key=GM[n[2]]
+            if key then dn[#dn+1]={tick=n[1],key=key} end
+        end
+    end
+    if #dn==0 then return nil,0,0,0,"No mappable drum notes" end
+    if #tempos==0 or tempos[1][1]~=0 then table.insert(tempos,1,{0,500000}) end
+    local tl={}; local cs,pt,ptm=0,0,500000
+    for _,tc in ipairs(tempos) do
+        cs=cs+(tc[1]-pt)*ptm/ppq/1e6
+        tl[#tl+1]={tick=tc[1],sec=cs,tempo=tc[2]}; pt=tc[1]; ptm=tc[2]
+    end
+    local function t2s(tick)
+        local s,p,tm=0,0,500000
+        for _,t in ipairs(tl) do
+            if t.tick>tick then break end
+            s=t.sec; p=t.tick; tm=t.tempo
+        end
+        return s+(tick-p)*tm/ppq/1e6
+    end
+    local gr,tks={},{}
+    for _,d in ipairs(dn) do
+        local t=d.tick
+        if not gr[t] then gr[t]={}; tks[#tks+1]=t end
+        local dup=false
+        for _,k in ipairs(gr[t]) do if k==d.key then dup=true; break end end
+        if not dup then gr[t][#gr[t]+1]=d.key end
+    end
+    table.sort(tks)
+    local seq={}
+    for _,t in ipairs(tks) do seq[#seq+1]={time=t2s(t),keys=gr[t]} end
+    local dur=seq[#seq] and seq[#seq].time or 0
+    local bpm=math.floor(60e6/(tempos[1][2] or 5e5)+0.5)
+    return seq,dur,bpm,#dn,nil
+end
+
+-- ════════════════════════════════════════════
+-- §9  MIDI LOAD & PLAY
+-- ════════════════════════════════════════════
+local function fetch(url)
+    local body, s, e
+    s,e = pcall(function()
+        if syn and syn.request then body=syn.request({Url=url,Method="GET"}).Body
+        elseif http_request then body=http_request({Url=url,Method="GET"}).Body
+        elseif request then body=request({Url=url,Method="GET"}).Body
+        elseif httpget then body=httpget(url)
+        else body=game:HttpGet(url) end
+    end)
+    return s and body or nil, tostring(e or "")
+end
+
+local statusCbRef = nil
+
+local function loadMidi(url, cb)
+    if not url or url=="" then return nil,"No URL" end
+    cb("⏳ Fetching...")
+    local raw,fe = fetch(url)
+    if not raw then return nil,"Fetch: "..(fe or "?") end
+    if #raw<14 then return nil,"Too small ("..#raw.."B)" end
+    cb("⏳ Parsing ("..#raw.."B)...")
+    local notes,tempos,ppq = MP.parse(raw)
+    if not notes then return nil,tempos end
+    cb("⏳ Building ("..#notes.." notes)...")
+    local seq,dur,bpm,cnt,err = MP.build(notes,tempos,ppq)
+    if not seq then return nil,err end
+    return {seq=seq, duration=dur, bpm=bpm, noteCount=cnt,
+            fileName=url:match("[^/]+$") or "midi"}
+end
+
+local function midiLoop()
+    if not midiObj or not midiObj.seq or #midiObj.seq==0 then
+        secN="NO MIDI"; task.wait(1); return
+    end
+    secN="♫ "..currentSong
+    local seq=midiObj.seq; local st=tick()
+    for i=1,#seq do
+        if not ok() then return end
+        local tgt=st+seq[i].time; local now=tick()
+        if tgt>now+0.004 then task.wait(tgt-now) end
+        if not ok() then return end
+        press(seq[i].keys, true)
+        barN=math.floor(i/16)
+    end
+    secN="↻ LOOP"
+    task.wait(0.4)
+end
+
+-- ════════════════════════════════════════════
+-- §10  ROCK & EYELESS PATTERNS (unchanged)
+-- ════════════════════════════════════════════
+local E=142
+local rA={{K.Ki,K.HC},{K.HC},{K.Sn,K.HC},{K.HC},{K.Ki,K.HC},{K.HC},{K.Sn,K.HC},{K.HC}}
+local rB={{K.Ki,K.HC},{K.HC},{K.Sn,K.HC},{K.Rd},{K.Ki,K.HC},{K.HO},{K.Sn,K.HC,K.T2},{K.HC}}
+local rC={{K.Ki,K.CR},{K.HC},{K.Sn,K.HC},{K.HC},{K.Ki,K.HC},{K.HO},{K.Sn,K.HC},{K.HC}}
+local rF={{K.Ki,K.HC},{K.HC},{K.T1,K.HC},{K.T2},{K.T3,K.Ki},{K.T3B},{K.Sn,K.Ki,K.CR},{K.CL,K.Ki}}
+
+local function rockLoop()
+    secN="Rock"
+    local b=barN
+    if b>0 and b%16==0 then bar(rF,8,120)
+    elseif b>0 and b%8==0 and RNG:NextNumber()<0.25 then bar(rC,8,120)
+    elseif b%4==3 and RNG:NextNumber()<0.45 then bar(rB,8,120)
+    else bar(rA,8,120) end
+end
+
+-- EYELESS patterns
+local iA={{K.Ki,K.Ch},nil,nil,nil,{K.Ki,K.Ch},nil,nil,nil}
+local iB={{K.Ki,K.Ch},nil,{K.Sn},nil,{K.Ki,K.Ch},nil,{K.Sn},nil}
+local iC={{K.Ki,K.Ch},{K.Ki2},{K.Sn,K.Ch},{K.Ki2},{K.Ki,K.Ch},{K.Ki2},{K.Sn,K.Ch},{K.Ki2}}
+local iD={{K.T1,K.Ki},{K.T1B,K.Ki2},{K.T2,K.Ki},{K.T2B,K.Ki2},{K.T3,K.Ki},{K.T3B,K.Ki2},{K.Sn,K.SnS,K.Ki},{K.CL,K.CR,K.Ch,K.Ki,K.Ki2}}
+local vA={{K.Ki,K.RB},{K.Ki2,K.RB},{K.Sn,K.Ki,K.RB},{K.Ki2,K.RB},{K.Ki,K.RB},{K.Ki2,K.RB},{K.Sn,K.Ki,K.RB},{K.Ki2,K.RB}}
+local vB={{K.Ki,K.RB},{K.Ki2,K.Sn2,K.RB},{K.Sn,K.Ki,K.RB},{K.Ki2,K.RB},{K.Ki,K.Sn2,K.RB},{K.Ki2,K.RB},{K.Sn,K.Ki,K.RB},{K.Ki2,K.Sn2,K.RB}}
+local vC={{K.Ki,K.RB},{K.Ki2,K.RB},{K.Sn,K.Ki,K.Ch},{K.Ki2,K.RB},{K.Ki,K.RB},{K.Ki2,K.RB},{K.Sn,K.Ki,K.RB},{K.Ki2,K.Ch}}
+local vD={{K.Ki,K.RB},{K.Ki2,K.HO},{K.Sn,K.Ki,K.RB},{K.Ki2,K.RB},{K.Ki,K.RB},{K.Ki2,K.HO},{K.Sn,K.Ki,K.Ch},{K.Ki2,K.RB}}
+local pA={{K.Ki,K.Ki2,K.CR},{K.Ki2,K.RB},{K.Sn,K.Ki,K.RB},{K.Ki2,K.RB},{K.Ki,K.Ch},{K.Ki2,K.RB},{K.Sn,K.Ki,K.RB},{K.Ki2,K.Ch}}
+local pB={{K.Ki,K.Ki2,K.CL},{K.Ki2,K.Sn2},{K.Sn,K.Ki,K.CR},{K.Ki2,K.RB},{K.Ki,K.Ch},{K.Ki2,K.Sn2},{K.Sn,K.Ki,K.Ch},{K.Ki2,K.CR}}
+local pF={{K.Ki,K.CR},{K.Ki2,K.Sn2},{K.Sn,K.Ki,K.CL},{K.Ki2},{K.T1,K.Ki},{K.T2,K.Ki2},{K.T3,K.Ki},{K.Sn,K.CR,K.CL,K.Ki,K.Ki2}}
+local cA={{K.Ki,K.Ki2,K.Ch},{K.Ki2},{K.Ki,K.Ch},{K.Ki2},{K.Sn,K.Ki,K.CR},{K.Ki2},{K.Ki,K.Ch},{K.Ki2},{K.Ki,K.Ch},{K.Ki2},{K.Ki,K.Ch},{K.Ki2},{K.Sn,K.Ki,K.CL},{K.Ki2},{K.Ki,K.Ch},{K.Ki2}}
+local cB={{K.Ki,K.Ch},{K.Ki2},{K.Ki,K.Ch},{K.Ki2,K.Sn2},{K.Sn,K.Ki,K.CR},{K.Ki2},{K.Ki,K.Sp},{K.Ki2},{K.Ki,K.Ki2,K.Ch},{K.Ki2},{K.Ki,K.Ch},{K.Ki2},{K.Sn,K.Ki,K.CL,K.CR},{K.Ki2},{K.Ki,K.Ch},{K.Ki2,K.Ki}}
+local cC={{K.Ki,K.Ki2,K.Ch,K.CR},{K.Ki2},{K.Ki,K.Ch},{K.Ki2},{K.Sn,K.Ki,K.CL},{K.Ki2},{K.Ki,K.Ch},{K.Ki2,K.Sn2},{K.Ki,K.Ch},{K.Ki2},{K.Ki,K.Ki2,K.Ch},{K.Ki2},{K.Sn,K.Ki,K.CR,K.CL},{K.Ki2},{K.Ki,K.Ch,K.Sp},{K.Ki2,K.Ki}}
+local cFl={{K.Ki,K.Ch},{K.Ki2},{K.Sn,K.Ki,K.CR},{K.Ki2},{K.T1,K.Ki},{K.T1B,K.Ki2},{K.T2,K.Ki},{K.T2B,K.Ki2},{K.T3,K.Ki},{K.T3B,K.Ki2},{K.Sn,K.Ki},{K.Sn2,K.Ki2},{K.Sn,K.SnS,K.Ki,K.Ki2},{K.Ki2},{K.Sn,K.Ki},{K.CL,K.CR,K.Ch,K.Ki,K.Ki2}}
+local bA={{K.Ki,K.Ki2,K.Ch},nil,{K.Sn,K.Ch},nil,{K.Ki,K.Ki2,K.Ch},{K.T3},{K.Sn,K.CR},nil}
+local bB={{K.Ki,K.Ki2,K.Ch},{K.T1},{K.Sn,K.T2},{K.T3},{K.Ki,K.Ch},{K.T2},{K.Sn,K.T3},{K.Ki2,K.T1}}
+local bC={{K.Ki,K.Ki2,K.Ch},{K.Ki2},{K.Sn,K.Ki,K.Ch},{K.Ki2},{K.Ki,K.Ki2,K.Ch},{K.Ki2,K.T3},{K.Sn,K.Ki,K.CR,K.CL},{K.Ki2}}
+local bF={{K.Ki,K.Ki2,K.CR},{K.Sn2},{K.T1,K.Ki},{K.T1B,K.Ki2},{K.T2,K.Ki},{K.T2B,K.Ki2},{K.T3,K.Ki},{K.Sn,K.SnS,K.CR,K.CL,K.Ch,K.Ki,K.Ki2}}
+local xA={{K.Ki,K.Sn,K.Ch},{K.Ki2},{K.Ki,K.Sn,K.Ch},{K.Ki2},{K.Ki,K.Sn,K.Ch},{K.Ki2},{K.Ki,K.Sn,K.Ch},{K.Ki2},{K.Ki,K.Sn,K.Ch},{K.Ki2},{K.Ki,K.Sn,K.Ch},{K.Ki2},{K.Ki,K.Sn,K.Ch},{K.Ki2},{K.Ki,K.Sn,K.Ch},{K.Ki2}}
+local xB={{K.Ki,K.Sn,K.CR},{K.Ki2},{K.Ki,K.Sn,K.CL},{K.Ki2},{K.Ki,K.Sn,K.Ch},{K.Ki2},{K.Ki,K.Sn,K.CR},{K.Ki2},{K.Ki,K.Sn,K.CL},{K.Ki2},{K.Ki,K.Sn,K.Ch},{K.Ki2},{K.Ki,K.Sn,K.CR},{K.Ki2},{K.Ki,K.Sn,K.CL,K.Ch},{K.Ki2}}
+local fA={{K.Sn,K.CR},{K.Sn2},{K.T1,K.Ki},{K.T1B,K.Ki2},{K.T2,K.Ki},{K.T2B,K.Ki2},{K.T3,K.Ki},{K.T3B,K.Ki2},{K.Sn,K.Ki,K.Ki2},{K.Sn},{K.T1,K.Ki},{K.T2,K.Ki2},{K.T3,K.Ki},{K.T3B,K.Ki2},{K.Sn,K.SnS,K.Ki,K.Ki2},{K.CL,K.CR,K.Ch,K.Ki,K.Ki2}}
+local tA={{K.CL,K.CR,K.Ch,K.Sp,K.Ki,K.Ki2},nil,nil,nil,nil,nil,nil,nil}
+
+local function eyelessLoop()
+    if introD then
+        introD=false
+        if not sec("⚡ INTRO",{iA,iB,iC,iD},8,E) then return end
+    end
+    if not sec("♫ VERSE",{vA,vA,vB,vC,vA,vB,vD,vC},8,E) then return end
+    if not sec("⬆ PRE-CH",{pA,pB,pF},8,E) then return end
+    if not sec("★ CHORUS",{cA,cA,cB,cA,cFl},16,E) then return end
+    if not sec("♫ VRS.2",{vB,vD,vC,vB},8,E) then return end
+    if not sec("⬆ PRE-C2",{pB,pA,pF},8,E) then return end
+    if not sec("★ CHOR.2",{cA,cC,cB,cC,cFl},16,E) then return end
+    if not sec("⬛ BREAK",{bA,bA,bB,bC,bF},8,E) then return end
+    if not sec("‼ BLAST",{xA,xB},16,E) then return end
+    if not sec("↓ FILL",{fA},16,E) then return end
+    sec("→ LOOP",{tA},8,E)
+end
+
+-- ════════════════════════════════════════════
+-- §11  PATTERN REGISTRY
+-- ════════════════════════════════════════════
+local PATS = {
+    {name="Rock",     bpm=120, fn=rockLoop},
+    {name="Eyeless♫", bpm=142, fn=eyelessLoop},
+    {name="MIDI",     bpm=0,   fn=midiLoop},
+}
+
+-- ════════════════════════════════════════════
+-- §12  START / STOP
+-- ════════════════════════════════════════════
+local function go()
+    if _G._AD then return end
+    _G._AD=true; barN=0
+    task.spawn(function()
+        while _G._AD do
+            local s,e=pcall(PATS[pIdx].fn)
+            if not s then warn("[Drum] "..tostring(e)); task.wait(0.3) end
+        end
+    end)
+end
+
+local function stop()
+    _G._AD=false; secN="IDLE"
+    pcall(function()
+        for _,v in pairs(K) do VIM:SendKeyEvent(false,v,false,game) end
+    end)
+end
+
+-- ════════════════════════════════════════════
+-- §13  GUI BUILDER
+-- ════════════════════════════════════════════
+local gui = Instance.new("ScreenGui")
+gui.Name="DrumGUI"; gui.ResetOnSpawn=false
+gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+gui.Parent=pgui
+
+-- ── Minimize Toggle Button (always visible) ──
+local miniBtn = Instance.new("TextButton", gui)
+miniBtn.Name="Mini"
+miniBtn.Size=UDim2.new(0,44,0,44)
+miniBtn.Position=UDim2.new(0,8,0.5,-22)
+miniBtn.BackgroundColor3=Color3.fromRGB(20,20,35)
+miniBtn.BackgroundTransparency=0.05
+miniBtn.Text="🥁"
+miniBtn.TextSize=22
+miniBtn.Font=Enum.Font.GothamBold
+miniBtn.TextColor3=Color3.fromRGB(255,200,50)
+miniBtn.Visible=false
+miniBtn.ZIndex=10
+Instance.new("UICorner",miniBtn).CornerRadius=UDim.new(0,22)
+local miniS=Instance.new("UIStroke",miniBtn)
+miniS.Color=Color3.fromRGB(255,160,0); miniS.Thickness=2
+
+-- ── Main Frame ──
+local fr = Instance.new("Frame", gui)
+fr.Name="Main"
+fr.Size=UDim2.new(0,256,0,345)
+fr.Position=UDim2.new(0.5,-128,0,8)
+fr.BackgroundColor3=Color3.fromRGB(14,14,24)
+fr.BackgroundTransparency=0.02
+fr.BorderSizePixel=0
+fr.Active=true; fr.Draggable=true
+Instance.new("UICorner",fr).CornerRadius=UDim.new(0,12)
+local frs=Instance.new("UIStroke",fr)
+frs.Color=Color3.fromRGB(255,155,0); frs.Thickness=1.6
+
+-- ── Title Bar ──
+local titleBar=Instance.new("Frame",fr)
+titleBar.Size=UDim2.new(1,0,0,30)
+titleBar.BackgroundColor3=Color3.fromRGB(22,22,40)
+titleBar.BackgroundTransparency=0.15; titleBar.BorderSizePixel=0
+Instance.new("UICorner",titleBar).CornerRadius=UDim.new(0,12)
+
+local tl=Instance.new("TextLabel",titleBar)
+tl.Size=UDim2.new(1,-60,1,0); tl.Position=UDim2.new(0,12,0,0)
+tl.BackgroundTransparency=1; tl.Text="🥁 AutoDrum v5"
+tl.TextColor3=Color3.fromRGB(255,200,50)
+tl.TextSize=14; tl.Font=Enum.Font.GothamBold
+tl.TextXAlignment=Enum.TextXAlignment.Left
+
+-- Minimize [_]
+local minBtn=Instance.new("TextButton",titleBar)
+minBtn.Size=UDim2.new(0,24,0,24); minBtn.Position=UDim2.new(1,-54,0,3)
+minBtn.BackgroundColor3=Color3.fromRGB(60,60,100)
+minBtn.BackgroundTransparency=0.2
+minBtn.Text="▬"; minBtn.TextColor3=Color3.new(1,1,1)
+minBtn.TextSize=12; minBtn.Font=Enum.Font.GothamBold
+Instance.new("UICorner",minBtn).CornerRadius=UDim.new(0,6)
+
+-- Close [✕]
+local clsBtn=Instance.new("TextButton",titleBar)
+clsBtn.Size=UDim2.new(0,24,0,24); clsBtn.Position=UDim2.new(1,-27,0,3)
+clsBtn.BackgroundColor3=Color3.fromRGB(150,28,28)
+clsBtn.BackgroundTransparency=0.15
+clsBtn.Text="✕"; clsBtn.TextColor3=Color3.new(1,1,1)
+clsBtn.TextSize=12; clsBtn.Font=Enum.Font.GothamBold
+Instance.new("UICorner",clsBtn).CornerRadius=UDim.new(0,6)
+
+-- ── Row 1: Play + Pattern Selector ──
+local togBtn=Instance.new("TextButton",fr)
+togBtn.Size=UDim2.new(0,112,0,34)
+togBtn.Position=UDim2.new(0,8,0,36)
+togBtn.BackgroundColor3=Color3.fromRGB(0,155,50)
+togBtn.Text="▶  PLAY"; togBtn.TextColor3=Color3.new(1,1,1)
+togBtn.TextSize=15; togBtn.Font=Enum.Font.GothamBold
+Instance.new("UICorner",togBtn).CornerRadius=UDim.new(0,9)
+
+local patBtn=Instance.new("TextButton",fr)
+patBtn.Size=UDim2.new(0,118,0,34)
+patBtn.Position=UDim2.new(0,126,0,36)
+patBtn.BackgroundColor3=Color3.fromRGB(42,42,72)
+patBtn.Text="Rock  ▸"; patBtn.TextColor3=Color3.fromRGB(195,195,255)
+patBtn.TextSize=13; patBtn.Font=Enum.Font.GothamBold
+Instance.new("UICorner",patBtn).CornerRadius=UDim.new(0,9)
+
+-- ── Divider: QUICK MIDI ──
+local div1=Instance.new("TextLabel",fr)
+div1.Size=UDim2.new(1,-16,0,18)
+div1.Position=UDim2.new(0,8,0,76)
+div1.BackgroundTransparency=1
+div1.Text="──── ⚡ QUICK MIDI ────"
+div1.TextColor3=Color3.fromRGB(255,180,40)
+div1.TextSize=10; div1.Font=Enum.Font.GothamBold
+
+-- ── Quick MIDI Buttons (5 songs in grid) ──
+local qBtns = {}
+local qY = 97
+local qGap = 4
+local qH = 30
+local qW = 118
+
+for i, preset in ipairs(PRESETS) do
+    local row = math.ceil(i / 2) - 1
+    local col = (i - 1) % 2
+
+    local x = 8 + col * (qW + qGap)
+    local y = qY + row * (qH + qGap)
+
+    local btn = Instance.new("TextButton", fr)
+    btn.Size = UDim2.new(0, qW, 0, qH)
+    btn.Position = UDim2.new(0, x, 0, y)
+    btn.BackgroundColor3 = preset.color
+    btn.BackgroundTransparency = 0.15
+    btn.Text = preset.name
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.TextSize = 11
+    btn.Font = Enum.Font.GothamBold
+    btn.TextTruncate = Enum.TextTruncate.AtEnd
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+    -- Artist sublabel
+    local sub = Instance.new("TextLabel", btn)
+    sub.Size = UDim2.new(1, -4, 0, 10)
+    sub.Position = UDim2.new(0, 2, 1, -12)
+    sub.BackgroundTransparency = 1
+    sub.Text = preset.artist
+    sub.TextColor3 = Color3.fromRGB(200, 200, 200)
+    sub.TextTransparency = 0.3
+    sub.TextSize = 8
+    sub.Font = Enum.Font.Gotham
+    sub.TextXAlignment = Enum.TextXAlignment.Center
+
+    qBtns[i] = btn
+end
+
+-- ── Divider: CUSTOM MIDI ──
+local div2=Instance.new("TextLabel",fr)
+div2.Size=UDim2.new(1,-16,0,18)
+div2.Position=UDim2.new(0,8,0,204)
+div2.BackgroundTransparency=1
+div2.Text="──── 🔗 CUSTOM MIDI ────"
+div2.TextColor3=Color3.fromRGB(100,160,255)
+div2.TextSize=10; div2.Font=Enum.Font.GothamBold
+
+-- ── URL Input Box ──
+local urlBox=Instance.new("TextBox",fr)
+urlBox.Size=UDim2.new(1,-16,0,28)
+urlBox.Position=UDim2.new(0,8,0,224)
+urlBox.BackgroundColor3=Color3.fromRGB(22,22,42)
+urlBox.BackgroundTransparency=0.05; urlBox.BorderSizePixel=0
+urlBox.Text=""; urlBox.PlaceholderText="  Paste .mid URL here..."
+urlBox.PlaceholderColor3=Color3.fromRGB(70,70,100)
+urlBox.TextColor3=Color3.fromRGB(200,210,255)
+urlBox.TextSize=10; urlBox.Font=Enum.Font.Gotham
+urlBox.ClearTextOnFocus=false
+urlBox.TextXAlignment=Enum.TextXAlignment.Left
+urlBox.TextTruncate=Enum.TextTruncate.AtEnd
+Instance.new("UICorner",urlBox).CornerRadius=UDim.new(0,7)
+local urlSt=Instance.new("UIStroke",urlBox)
+urlSt.Color=Color3.fromRGB(60,60,100); urlSt.Thickness=1
+Instance.new("UIPadding",urlBox).PaddingLeft=UDim.new(0,6)
+
+-- ── Load Button + MIDI Status ──
+local loadBtn=Instance.new("TextButton",fr)
+loadBtn.Size=UDim2.new(0,88,0,26)
+loadBtn.Position=UDim2.new(0,8,0,258)
+loadBtn.BackgroundColor3=Color3.fromRGB(55,55,115)
+loadBtn.Text="📥 LOAD"; loadBtn.TextColor3=Color3.new(1,1,1)
+loadBtn.TextSize=12; loadBtn.Font=Enum.Font.GothamBold
+Instance.new("UICorner",loadBtn).CornerRadius=UDim.new(0,7)
+
+local midiLbl=Instance.new("TextLabel",fr)
+midiLbl.Size=UDim2.new(0,145,0,26)
+midiLbl.Position=UDim2.new(0,102,0,258)
+midiLbl.BackgroundTransparency=1
+midiLbl.Text="No MIDI loaded"
+midiLbl.TextColor3=Color3.fromRGB(90,90,105)
+midiLbl.TextSize=9; midiLbl.Font=Enum.Font.Gotham
+midiLbl.TextXAlignment=Enum.TextXAlignment.Left
+midiLbl.TextTruncate=Enum.TextTruncate.AtEnd
+
+-- ── Status Line 1 (Section + BPM) ──
+local s1=Instance.new("TextLabel",fr)
+s1.Size=UDim2.new(1,-16,0,18)
+s1.Position=UDim2.new(0,8,0,292)
+s1.BackgroundTransparency=1
+s1.Text="⏹ Rock · 120 BPM"
+s1.TextColor3=Color3.fromRGB(130,130,130)
+s1.TextSize=12; s1.Font=Enum.Font.GothamBold
+
+-- ── Status Line 2 (Bar + Playing) ──
+local s2=Instance.new("TextLabel",fr)
+s2.Size=UDim2.new(1,-16,0,16)
+s2.Position=UDim2.new(0,8,0,314)
+s2.BackgroundTransparency=1
+s2.Text="Bar: 0  │  Tap ▶ or press P"
+s2.TextColor3=Color3.fromRGB(90,90,105)
+s2.TextSize=10; s2.Font=Enum.Font.Gotham
+
+-- ── Now Playing Label ──
+local npLbl=Instance.new("TextLabel",fr)
+npLbl.Size=UDim2.new(1,-16,0,14)
+npLbl.Position=UDim2.new(0,8,0,332)
+npLbl.BackgroundTransparency=1
+npLbl.Text=""
+npLbl.TextColor3=Color3.fromRGB(255,200,60)
+npLbl.TextTransparency=0.2
+npLbl.TextSize=9; npLbl.Font=Enum.Font.GothamBold
+npLbl.TextTruncate=Enum.TextTruncate.AtEnd
+
+-- ════════════════════════════════════════════
+-- §14  SECTION COLORS
+-- ════════════════════════════════════════════
+local SC = {
+    ["Rock"]=Color3.fromRGB(100,220,130),
+    ["⚡ INTRO"]=Color3.fromRGB(160,160,160),
+    ["♫ VERSE"]=Color3.fromRGB(100,200,255),
+    ["♫ VRS.2"]=Color3.fromRGB(80,180,230),
+    ["⬆ PRE-CH"]=Color3.fromRGB(255,200,80),
+    ["⬆ PRE-C2"]=Color3.fromRGB(255,220,60),
+    ["★ CHORUS"]=Color3.fromRGB(255,120,40),
+    ["★ CHOR.2"]=Color3.fromRGB(255,80,20),
+    ["⬛ BREAK"]=Color3.fromRGB(180,80,255),
+    ["‼ BLAST"]=Color3.fromRGB(255,40,40),
+    ["↓ FILL"]=Color3.fromRGB(255,220,60),
+    ["→ LOOP"]=Color3.fromRGB(120,255,120),
+    ["NO MIDI"]=Color3.fromRGB(255,80,80),
+    ["↻ LOOP"]=Color3.fromRGB(120,255,180),
+    ["IDLE"]=Color3.fromRGB(130,130,130),
+}
+
+-- ════════════════════════════════════════════
+-- §15  GUI REFRESH
+-- ════════════════════════════════════════════
+local function refresh()
+    local p=PATS[pIdx]
+    patBtn.Text=p.name.."  ▸"
+
+    if _G._AD then
+        togBtn.Text="⏸  STOP"
+        togBtn.BackgroundColor3=Color3.fromRGB(175,28,28)
+    else
+        togBtn.Text="▶  PLAY"
+        togBtn.BackgroundColor3=Color3.fromRGB(0,155,50)
+    end
+
+    local bStr
+    if p.name=="MIDI" and midiObj then bStr=tostring(midiObj.bpm)
+    elseif p.name=="MIDI" then bStr="---"
+    else bStr=tostring(p.bpm) end
+
+    if _G._AD then
+        local dSec = secN
+        -- For MIDI, clean up the section name
+        s1.Text=dSec.." · "..bStr.." BPM"
+        s1.TextColor3=SC[dSec] or Color3.fromRGB(80,255,90)
+        s2.Text="Bar: "..barN.."  │  🟢 Playing"
+        s2.TextColor3=Color3.fromRGB(60,185,60)
+    else
+        s1.Text="⏹ "..p.name.." · "..bStr.." BPM"
+        s1.TextColor3=Color3.fromRGB(130,130,130)
+        s2.Text="Bar: "..barN.."  │  Tap ▶ or press P"
+        s2.TextColor3=Color3.fromRGB(90,90,105)
+    end
+
+    if midiObj then
+        midiLbl.Text="✅ "..midiObj.noteCount.."n · "
+            ..string.format("%.0fs",midiObj.duration)
+            .." · "..midiObj.bpm.."BPM"
+        midiLbl.TextColor3=Color3.fromRGB(80,255,80)
+    elseif not midiLoading then
+        midiLbl.Text="No MIDI loaded"
+        midiLbl.TextColor3=Color3.fromRGB(90,90,105)
+    end
+
+    if currentSong~="" then
+        npLbl.Text="♪ Now: "..currentSong
+    else
+        npLbl.Text=""
+    end
+
+    -- Highlight active Quick MIDI button
+    for i, btn in ipairs(qBtns) do
+        if midiObj and currentSong==PRESETS[i].name then
+            Instance.new("UIStroke",btn).Color = Color3.fromRGB(255,255,100)
+            -- only set once check
+        end
+    end
+end
+
+-- Live updater
+task.spawn(function()
+    while gui and gui.Parent do
+        pcall(refresh)
+        task.wait(0.25)
+    end
+end)
+
+-- ════════════════════════════════════════════
+-- §16  TOGGLE & CYCLE
+-- ════════════════════════════════════════════
+local function toggle()
+    if _G._AD then stop() else go() end
+    refresh()
+end
+
+local function cycle()
+    local was=_G._AD
+    if was then stop(); task.wait(0.15) end
+    -- Only cycle between Rock and Eyeless (MIDI via buttons)
+    if pIdx>=2 then pIdx=1 else pIdx=pIdx+1 end
+    barN=0; introD=true; secN="IDLE"; currentSong=""
+    refresh()
+    if was then go(); refresh() end
+end
+
+-- ════════════════════════════════════════════
+-- §17  MIDI LOADER (shared)
+-- ════════════════════════════════════════════
+local function doLoadMidi(url, songName)
+    if midiLoading then return end
+    midiLoading = true
+
+    local was = _G._AD
+    if was then stop(); task.wait(0.15) end
+
+    loadBtn.Text = "⏳ ..."
+    loadBtn.BackgroundColor3 = Color3.fromRGB(80,80,40)
+
+    -- Highlight selected Quick MIDI
+    for i, btn in ipairs(qBtns) do
+        if PRESETS[i].name == songName then
+            btn.BackgroundTransparency = 0
+        else
+            btn.BackgroundTransparency = 0.15
+        end
+        -- Remove old strokes
+        for _, c in ipairs(btn:GetChildren()) do
+            if c:IsA("UIStroke") then c:Destroy() end
+        end
+    end
+
+    task.spawn(function()
+        local data, err = loadMidi(url, function(msg)
+            midiLbl.Text = msg
+            midiLbl.TextColor3 = Color3.fromRGB(255,200,60)
+        end)
+
+        midiLoading = false
+        loadBtn.Text = "📥 LOAD"
+        loadBtn.BackgroundColor3 = Color3.fromRGB(55,55,115)
+
+        if data then
+            midiObj = data
+            currentSong = songName or data.fileName
+            pIdx = 3  -- MIDI mode
+            barN = 0; secN = "IDLE"
+
+            midiLbl.Text = "✅ "..data.noteCount.."n · "
+                ..string.format("%.0fs", data.duration)
+                .." · "..data.bpm.."BPM"
+            midiLbl.TextColor3 = Color3.fromRGB(80,255,80)
+
+            -- Highlight active button
+            for i, btn in ipairs(qBtns) do
+                for _, c in ipairs(btn:GetChildren()) do
+                    if c:IsA("UIStroke") then c:Destroy() end
+                end
+                if PRESETS[i].name == songName then
+                    local st = Instance.new("UIStroke", btn)
+                    st.Color = Color3.fromRGB(255,255,100)
+                    st.Thickness = 2
+                    btn.BackgroundTransparency = 0
+                else
+                    btn.BackgroundTransparency = 0.15
+                end
+            end
+
+            refresh()
+
+            -- Auto-play after load
+            task.wait(0.2)
+            if not _G._AD then
+                go()
+                refresh()
+            end
+
+            pcall(function()
+                game:GetService("StarterGui"):SetCore("SendNotification",{
+                    Title="🥁 "..currentSong.." Loaded!",
+                    Text=data.noteCount.." notes · "..data.bpm.." BPM · Auto-playing!",
+                    Duration=3
+                })
+            end)
+        else
+            midiLbl.Text = "❌ "..tostring(err):sub(1,30)
+            midiLbl.TextColor3 = Color3.fromRGB(255,70,70)
+
+            -- Reset button highlights
+            for i, btn in ipairs(qBtns) do
+                btn.BackgroundTransparency = 0.15
+                for _, c in ipairs(btn:GetChildren()) do
+                    if c:IsA("UIStroke") then c:Destroy() end
+                end
+            end
+        end
+    end)
+end
+
+-- ════════════════════════════════════════════
+-- §18  GUI TOGGLE (Minimize / Maximize)
+-- ════════════════════════════════════════════
+local function toggleGUI()
+    guiOpen = not guiOpen
+    fr.Visible = guiOpen
+    miniBtn.Visible = not guiOpen
+
+    if _G._AD and not guiOpen then
+        -- Show pulsing indicator on mini button
+        miniBtn.Text = "🥁"
+    end
+end
+
+-- ════════════════════════════════════════════
+-- §19  CONNECTIONS
+-- ════════════════════════════════════════════
+
+-- Play/Stop
+togBtn.MouseButton1Click:Connect(toggle)
+
+-- Pattern Cycle
+patBtn.MouseButton1Click:Connect(cycle)
+
+-- Minimize
+minBtn.MouseButton1Click:Connect(toggleGUI)
+miniBtn.MouseButton1Click:Connect(toggleGUI)
+
+-- Close
+clsBtn.MouseButton1Click:Connect(function()
+    stop(); task.wait(0.1)
+    if gui then gui:Destroy() end
+    if kConn then kConn:Disconnect() end
+    _G._AD = nil
+    print("[AutoDrum] 🗑️ Unloaded.")
+end)
+
+-- Quick MIDI Buttons
+for i, btn in ipairs(qBtns) do
+    btn.MouseButton1Click:Connect(function()
+        doLoadMidi(PRESETS[i].url, PRESETS[i].name)
+    end)
+end
+
+-- Custom URL Load
+loadBtn.MouseButton1Click:Connect(function()
+    local url = urlBox.Text:match("^%s*(.-)%s*$")
+    if url and url ~= "" then
+        doLoadMidi(url, url:match("([^/]+)%.mid") or "Custom")
+    else
+        midiLbl.Text = "⚠ Paste URL first!"
+        midiLbl.TextColor3 = Color3.fromRGB(255,180,40)
+    end
+end)
+
+-- Keyboard P = Toggle Play
+kConn = UIS.InputBegan:Connect(function(i, gp)
+    if gp then return end
+    if i.KeyCode == Enum.KeyCode.P then toggle() end
+end)
+
+-- Mini button pulse animation when playing
+task.spawn(function()
+    local pulse = 0
+    while gui and gui.Parent do
+        if not guiOpen and _G._AD then
+            pulse = pulse + 1
+            local a = 0.3 + 0.3 * math.sin(pulse * 0.5)
+            miniS.Color = Color3.fromRGB(
+                255,
+                math.floor(150 + 100 * math.sin(pulse * 0.3)),
+                0
+            )
+            miniBtn.BackgroundTransparency = a * 0.3
+        else
+            miniS.Color = Color3.fromRGB(255,160,0)
+            miniBtn.BackgroundTransparency = 0.05
+        end
+        task.wait(0.1)
+    end
+end)
+
+-- ════════════════════════════════════════════
+-- §20  STARTUP
+-- ════════════════════════════════════════════
+refresh()
+pcall(function()
+    game:GetService("StarterGui"):SetCore("SendNotification",{
+        Title="🥁 AutoDrum v5 Loaded!",
+        Text="5 Quick MIDI songs · Tap to play!",
+        Duration=4
+    })
+end)
+print("══════════════════════════════════════════════════")
+print("  🥁 AutoDrum v5.0 ✅ LOADED")
+print("  ├─ Rock 120BPM  │  Eyeless♫ 142BPM")
+print("  ├─ 5 Quick MIDI: Eyeless│SIC│Nightmare│Ppl=Shit│Holy Wars")
+print("  ├─ Custom MIDI URL loader")
+print("  ├─ Toggle GUI: minimize [▬] / maximize [🥁]")
+print("  └─ Press P or tap ▶ to start")
+print("══════════════════════════════════════════════════")
